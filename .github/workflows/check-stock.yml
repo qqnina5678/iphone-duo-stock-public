@@ -39,18 +39,27 @@ jobs:
           import urllib.request
           from pathlib import Path
           from datetime import datetime, timedelta, timezone
+          from zoneinfo import ZoneInfo
 
           PART = "MK2D4ZP/A"
           STORES = {
               "R713": "Apple 台北 101",
               "R694": "Apple 信義 A13",
           }
+
           STATE = Path("stock-state.json")
+          HISTORY = Path("notification-history.jsonl")
+          TAIWAN = ZoneInfo("Asia/Taipei")
+
           BARK_KEY = os.environ.get("BARK_KEY", "")
-          TEST = os.environ.get("TEST_PUSH", "false").lower() == "true"
+          TEST = os.environ.get(
+              "TEST_PUSH", "false"
+          ).lower() == "true"
 
           if not BARK_KEY:
-              raise RuntimeError("BARK_KEY secret is missing")
+              raise RuntimeError(
+                  "BARK_KEY secret is missing"
+              )
 
           def send_bark(title, message):
               payload = json.dumps({
@@ -59,33 +68,48 @@ jobs:
                   "body": message,
                   "group": "iPhone-Duo-Stock",
                   "level": "timeSensitive",
-                  "url": "https://www.apple.com/tw/shop/buy-iphone",
+                  "url": (
+                      "https://www.apple.com/tw/"
+                      "shop/buy-iphone"
+                  ),
               }).encode("utf-8")
 
               request = urllib.request.Request(
                   "https://api.day.app/push",
                   data=payload,
-                  headers={"Content-Type": "application/json"},
+                  headers={
+                      "Content-Type": "application/json"
+                  },
                   method="POST",
               )
-              with urllib.request.urlopen(request, timeout=20) as response:
+
+              with urllib.request.urlopen(
+                  request, timeout=20
+              ) as response:
                   result = json.load(response)
 
               if result.get("code") != 200:
-                  raise RuntimeError("Bark rejected notification")
+                  raise RuntimeError(
+                      "Bark rejected notification"
+                  )
+
               print("Bark notification sent")
 
           if TEST:
               send_bark(
                   "iPhone Duo 監控測試",
-                  "新的 Public GitHub Actions 已成功連接 Bark！",
+                  "Public GitHub Actions "
+                  "已成功連接 Bark！",
               )
               raise SystemExit(0)
 
           url = (
-              "https://www.apple.com/tw/shop/retail/pickup-message"
-              "?pl=true&parts.0=MK2D4ZP%2FA&location=110"
+              "https://www.apple.com/tw/"
+              "shop/retail/pickup-message"
+              "?pl=true&parts.0=MK2D4ZP%2FA"
+              "&location=110"
           )
+
           request = urllib.request.Request(
               url,
               headers={
@@ -94,97 +118,208 @@ jobs:
               },
           )
 
-          with urllib.request.urlopen(request, timeout=30) as response:
+          with urllib.request.urlopen(
+              request, timeout=30
+          ) as response:
               data = json.load(response)
 
           body = data.get("body") or {}
-          pickup = (body.get("content") or {}).get("pickupMessage") or {}
-          stores = body.get("stores") or pickup.get("stores") or []
+          pickup = (
+              (body.get("content") or {})
+              .get("pickupMessage") or {}
+          )
+          stores = (
+              body.get("stores")
+              or pickup.get("stores")
+              or []
+          )
 
           statuses = {}
+
           for store in stores:
               store_id = store.get("storeNumber")
+
               if store_id not in STORES:
                   continue
-              parts = store.get("partsAvailability") or {}
+
+              parts = (
+                  store.get("partsAvailability")
+                  or {}
+              )
               part = parts.get(PART) or {}
               status = part.get("pickupDisplay")
-              if status not in ("available", "unavailable"):
+
+              if status not in (
+                  "available", "unavailable"
+              ):
                   raise RuntimeError(
-                      f"Unknown pickup status for {store_id}"
+                      "Unknown pickup status "
+                      f"for {store_id}"
                   )
+
               statuses[store_id] = status
 
           if set(statuses) != set(STORES):
               raise RuntimeError(
-                  "Apple response missing target store data"
+                  "Apple response missing "
+                  "target store data"
               )
 
           available = sorted(
-              store_id for store_id, status in statuses.items()
+              store_id
+              for store_id, status
+              in statuses.items()
               if status == "available"
           )
+
           for store_id, name in STORES.items():
-              print(f"{name}: {statuses[store_id]}")
+              print(
+                  f"{name}: {statuses[store_id]}"
+              )
 
           previous = {}
+
           if STATE.exists():
-              previous = json.loads(STATE.read_text())
+              previous = json.loads(
+                  STATE.read_text(
+                      encoding="utf-8"
+                  )
+              )
 
-          old_available = set(previous.get("available") or [])
-          newly_available = set(available) - old_available
+          old_available = set(
+              previous.get("available") or []
+          )
 
-          last_sent = previous.get("last_notified_at")
+          newly_available = (
+              set(available) - old_available
+          )
+
+          last_sent = previous.get(
+              "last_notified_at"
+          )
           last_time = None
+
           if last_sent:
               try:
-                  last_time = datetime.fromisoformat(
-                      last_sent.replace("Z", "+00:00")
+                  last_time = (
+                      datetime.fromisoformat(
+                          last_sent.replace(
+                              "Z", "+00:00"
+                          )
+                      )
                   )
               except ValueError:
-                  print("Invalid previous notification timestamp")
+                  print(
+                      "Invalid previous "
+                      "notification timestamp"
+                  )
 
           now = datetime.now(timezone.utc)
+
           should_notify = bool(available) and (
               bool(newly_available)
               or last_time is None
-              or now - last_time >= timedelta(minutes=2)
+              or now - last_time
+              >= timedelta(minutes=2)
           )
 
           if should_notify:
-              names = "、".join(STORES[s] for s in available)
+              names = "、".join(
+                  STORES[s] for s in available
+              )
+
+              taiwan_time = now.astimezone(
+                  TAIWAN
+              ).strftime(
+                  "%Y/%m/%d %H:%M:%S"
+              )
+
+              message = (
+                  f"{names} 可以取貨！\n"
+                  "星光白色 256GB\n"
+                  f"查到現貨時間："
+                  f"{taiwan_time}（台灣時間）\n"
+                  "請立即確認 Apple 官網。"
+              )
+
               send_bark(
                   "iPhone Duo 有現貨！",
-                  f"{names} 可以取貨！星光白色 256GB，"
-                  "請立即確認 Apple 官網。",
+                  message,
               )
+
+              # Only record successful notifications.
+              record = {
+                  "notified_at_taiwan":
+                      taiwan_time,
+                  "notified_at_utc":
+                      now.isoformat(),
+                  "available_store_ids":
+                      available,
+                  "available_stores": [
+                      STORES[s]
+                      for s in available
+                  ],
+              }
+
+              with HISTORY.open(
+                  "a", encoding="utf-8"
+              ) as file:
+                  file.write(
+                      json.dumps(
+                          record,
+                          ensure_ascii=False
+                      ) + "\n"
+                  )
+
+              print(
+                  "Notification history saved: "
+                  + taiwan_time
+              )
+
               last_sent = now.isoformat()
+
           elif not available:
               last_sent = None
-              print("No stock; notifications paused")
+              print(
+                  "No stock; notifications paused"
+              )
+
           else:
-              print("Stock available; waiting for 2-minute interval")
+              print(
+                  "Stock available; waiting "
+                  "for 2-minute interval"
+              )
 
           STATE.write_text(
-              json.dumps({
-                  "available": available,
-                  "last_notified_at": last_sent,
-              }, ensure_ascii=False, indent=2) + "\n"
+              json.dumps(
+                  {
+                      "available": available,
+                      "last_notified_at":
+                          last_sent,
+                  },
+                  ensure_ascii=False,
+                  indent=2,
+              ) + "\n",
+              encoding="utf-8",
           )
           PY
 
-      - name: Save monitoring state
+      - name: Save monitoring state and history
         if: success() && inputs.test_push != true
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if [ -n "$(git status --porcelain -- stock-state.json)" ]; then
+          git add stock-state.json
+          if [ -f notification-history.jsonl ]; then
+            git add notification-history.jsonl
+          fi
+
+          if ! git diff --cached --quiet; then
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add stock-state.json
-            git commit -m "Update stock monitoring state"
+            git commit -m "Update stock monitoring state and history"
             AUTH=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
             git -c "http.extraheader=AUTHORIZATION: basic $AUTH" push origin HEAD:main
           else
-            echo "No state changes"
+            echo "No state or history changes"
           fi
